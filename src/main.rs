@@ -1,3 +1,7 @@
+#![feature(test)]
+
+extern crate test;
+
 use std::collections::HashMap;
 
 fn main() {
@@ -214,12 +218,43 @@ mod tests {
         y: Vec<f64>
     }
 
-    fn test_multiply<M: Matrix + std::fmt::Debug>(t: TestCase) {
-        let t = t1();
+    fn test_multiply<M: Matrix>(t: TestCase) {
         let d = M::from_dense_array(t.m, t.r, t.c);
-        println!("{:?}", d);
         let y = d.multiply(&t.x);
         assert_eq!(y, t.y);
+    }
+
+    fn bench_multiply<M: Matrix>(t: TestCase, b: &mut test::Bencher) {
+        let x = t.x;
+        let d = M::from_dense_array(t.m, t.r, t.c);
+        b.iter(|| {
+            d.multiply(test::black_box(&x));
+        });
+    }
+
+    #[bench]
+    fn bench_dense(b: &mut test::Bencher) {
+        bench_multiply::<Dense>(t1(), b);
+    }
+
+    #[bench]
+    fn bench_csr(b: &mut test::Bencher) {
+        bench_multiply::<CSR>(t1(), b);
+    }
+
+    #[bench]
+    fn bench_coo(b: &mut test::Bencher) {
+        bench_multiply::<COO>(t1(), b);
+    }
+
+    #[bench]
+    fn bench_lil(b: &mut test::Bencher) {
+        bench_multiply::<LIL>(t1(), b);
+    }
+
+    #[bench]
+    fn bench_dok(b: &mut test::Bencher) {
+        bench_multiply::<DOK>(t1(), b);
     }
 
     fn t1() -> TestCase {
