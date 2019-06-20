@@ -203,85 +203,59 @@ mod tests {
         y: Vec<f64>
     }
 
-    fn test_multiply<M: Matrix>(t: TestCase) {
-        let d = M::from_dense_array(t.m, t.r, t.c);
-        let y = d.multiply(&t.x);
-        assert_eq!(y, t.y);
+    macro_rules! test_multiply {
+        ($($name:ident, $matrix_type:ty, $test_case:expr),*) => {
+            $(
+                #[test]
+                fn $name() {
+                    let t = $test_case;
+                    let d = <$matrix_type>::from_dense_array(t.m, t.r, t.c);
+                    let y = d.multiply(&t.x);
+                    assert_eq!(y, t.y);
+                }
+            )*
+        }
     }
 
-    fn bench_multiply<M: Matrix>(t: TestCase, b: &mut test::Bencher) {
-        let x = t.x;
-        let d = test::black_box(M::from_dense_array(t.m, t.r, t.c));
-        let mut y = test::black_box(vec![0.0; x.len()]);
-        b.iter(|| {
-            d.multiply_into(test::black_box(&x), &mut y);
-        });
+    macro_rules! bench_multiply {
+        ($($name:ident, $matrix_type:ty, $test_case:expr),*) => {
+            $(
+                #[bench]
+                fn $name(b: &mut test::Bencher) {
+                    let t = $test_case;
+                    let x = t.x;
+                    let d = test::black_box(
+                        <$matrix_type>::from_dense_array(t.m, t.r, t.c)
+                    );
+                    let mut y = test::black_box(vec![0.0; x.len()]);
+                    b.iter(|| {
+                        d.multiply_into(test::black_box(&x), &mut y);
+                    });
+                }
+            )*
+        }
     }
 
-    #[bench]
-    fn bench_dense_t1(b: &mut test::Bencher) {
-        bench_multiply::<Dense>(t1(), b);
-    }
+    test_multiply!(
+        test_dense_t1, Dense, t1(),
+        test_lil_t1, LIL, t1(),
+        test_coo_t1, COO, t1(),
+        test_dok_t1, DOK, t1(),
+        test_csr_t1, CSR, t1()
+    );
 
-    #[bench]
-    fn bench_csr_t1(b: &mut test::Bencher) {
-        bench_multiply::<CSR>(t1(), b);
-    }
-
-    #[bench]
-    fn bench_coo_t1(b: &mut test::Bencher) {
-        bench_multiply::<COO>(t1(), b);
-    }
-
-    #[bench]
-    fn bench_lil_t1(b: &mut test::Bencher) {
-        bench_multiply::<LIL>(t1(), b);
-    }
-
-    #[bench]
-    fn bench_dok_t1(b: &mut test::Bencher) {
-        bench_multiply::<DOK>(t1(), b);
-    }
-
-    #[bench]
-    fn bench_dense_t2(b: &mut test::Bencher) {
-        bench_multiply::<Dense>(t2(), b);
-    }
-
-    #[bench]
-    fn bench_csr_t2(b: &mut test::Bencher) {
-        bench_multiply::<CSR>(t2(), b);
-    }
-
-    #[bench]
-    fn bench_coo_t2(b: &mut test::Bencher) {
-        bench_multiply::<COO>(t2(), b);
-    }
-
-    #[bench]
-    fn bench_lil_t2(b: &mut test::Bencher) {
-        bench_multiply::<LIL>(t2(), b);
-    }
-
-    #[bench]
-    fn bench_dok_t2(b: &mut test::Bencher) {
-        bench_multiply::<DOK>(t2(), b);
-    }
-
-    #[test]
-    fn dense_t1() { test_multiply::<Dense>(t1()); }
-
-    #[test]
-    fn csr_t1() { test_multiply::<CSR>(t1()); }
-
-    #[test]
-    fn coo_t1() { test_multiply::<COO>(t1()); }
-
-    #[test]
-    fn dok_t1() { test_multiply::<DOK>(t1()); }
-
-    #[test]
-    fn lil_t1() { test_multiply::<LIL>(t1()); }
+    bench_multiply!(
+        bench_dense_t1, Dense, t1(),
+        bench_dense_t2, Dense, t2(),
+        bench_lil_t1, LIL, t1(),
+        bench_lil_t2, LIL, t2(),
+        bench_coo_t1, COO, t1(),
+        bench_coo_t2, COO, t2(),
+        bench_dok_t1, DOK, t1(),
+        bench_dok_t2, DOK, t2(),
+        bench_csr_t1, CSR, t1(),
+        bench_csr_t2, CSR, t2()
+    );
 
     fn t1() -> TestCase {
         TestCase {
