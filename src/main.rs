@@ -5,7 +5,11 @@ extern crate test;
 use std::collections::HashMap;
 
 fn main() {
-    println!("Hello, world!");
+    let d = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0];
+    let m = CSR::from_dense_array(d, 3, 3);
+    let x = vec![1.1, 2.2, 3.3];
+    let y = m.multiply(&x);
+    println!("{:?}", y);
 }
 
 trait Matrix {
@@ -151,6 +155,7 @@ impl Matrix for CSR {
         CSR { entries, row_offsets, col_indices }
     }
 
+    #[inline(never)]
     fn multiply_into(&self, x: &[f64], y: &mut [f64]) {
         // Outer loop can be parallelised
         for i in 0..self.row_offsets.len() - 1 {
