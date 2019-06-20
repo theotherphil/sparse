@@ -10,7 +10,12 @@ fn main() {
 
 trait Matrix {
     fn from_dense_array(data: Vec<f64>, rows: usize, cols: usize) -> Self;
-    fn multiply(&self, x: &[f64]) -> Vec<f64>;
+    fn multiply(&self, x: &[f64]) -> Vec<f64> {
+        let mut y = vec![0.0; x.len()];
+        self.multiply_into(x, &mut y);
+        y
+    }
+    fn multiply_into(&self, x: &[f64], y: &mut [f64]);
 }
 
 /// Dictionary of keys
@@ -37,14 +42,10 @@ impl Matrix for DOK {
         DOK { entries }
     }
 
-    fn multiply(&self, x: &[f64]) -> Vec<f64> {
-        let mut y = vec![0.0; x.len()];
-
+    fn multiply_into(&self, x: &[f64], y: &mut [f64]) {
         for ((row, col), value) in &self.entries {
             y[*row] += *value * x[*col];
         }
-
-        y
     }
 }
 
@@ -74,16 +75,12 @@ impl Matrix for LIL {
         LIL { rows: rs }
     }
 
-    fn multiply(&self, x: &[f64]) -> Vec<f64> {
-        let mut y = vec![0.0; x.len()];
-
+    fn multiply_into(&self, x: &[f64], y: &mut [f64]) {
         for row in 0..self.rows.len() {
             for (col, value) in &self.rows[row] {
                 y[row] += *value * x[*col];
             }
         }
-
-        y
     }
 }
 
@@ -112,14 +109,10 @@ impl Matrix for COO {
         COO { entries }
     }
 
-    fn multiply(&self, x: &[f64]) -> Vec<f64> {
-        let mut y = vec![0.0; x.len()];
-
+    fn multiply_into(&self, x: &[f64], y: &mut [f64]) {
         for (row, col, value) in &self.entries {
             y[*row] += *value * x[*col];
         }
-
-        y
     }
 }
 
@@ -158,17 +151,13 @@ impl Matrix for CSR {
         CSR { entries, row_offsets, col_indices }
     }
 
-    fn multiply(&self, x: &[f64]) -> Vec<f64> {
-        let mut y = vec![0.0; x.len()];
-
+    fn multiply_into(&self, x: &[f64], y: &mut [f64]) {
         // Outer loop can be parallelised
         for i in 0..self.row_offsets.len() - 1 {
             for j in self.row_offsets[i]..self.row_offsets[i + 1] {
                 y[i] += self.entries[j] * x[self.col_indices[j]];
             }
         }
-
-        y
     }
 }
 
@@ -184,16 +173,12 @@ impl Matrix for Dense {
         Dense { data, rows, cols }
     }
 
-    fn multiply(&self, x: &[f64]) -> Vec<f64> {
-        let mut y = vec![0.0; x.len()];
-
+    fn multiply_into(&self, x: &[f64], y: &mut [f64]) {
         for row in 0..self.rows {
             for col in 0..self.cols {
                 y[row] += x[col] * self.data[self.cols * row + col];
             }
         }
-
-        y
     }
 }
 
@@ -226,36 +211,77 @@ mod tests {
 
     fn bench_multiply<M: Matrix>(t: TestCase, b: &mut test::Bencher) {
         let x = t.x;
-        let d = M::from_dense_array(t.m, t.r, t.c);
+        let d = test::black_box(M::from_dense_array(t.m, t.r, t.c));
+        let mut y = test::black_box(vec![0.0; x.len()]);
         b.iter(|| {
-            d.multiply(test::black_box(&x));
+            d.multiply_into(test::black_box(&x), &mut y);
         });
     }
 
     #[bench]
-    fn bench_dense(b: &mut test::Bencher) {
+    fn bench_dense_t1(b: &mut test::Bencher) {
         bench_multiply::<Dense>(t1(), b);
     }
 
     #[bench]
-    fn bench_csr(b: &mut test::Bencher) {
+    fn bench_csr_t1(b: &mut test::Bencher) {
         bench_multiply::<CSR>(t1(), b);
     }
 
     #[bench]
-    fn bench_coo(b: &mut test::Bencher) {
+    fn bench_coo_t1(b: &mut test::Bencher) {
         bench_multiply::<COO>(t1(), b);
     }
 
     #[bench]
-    fn bench_lil(b: &mut test::Bencher) {
+    fn bench_lil_t1(b: &mut test::Bencher) {
         bench_multiply::<LIL>(t1(), b);
     }
 
     #[bench]
-    fn bench_dok(b: &mut test::Bencher) {
+    fn bench_dok_t1(b: &mut test::Bencher) {
         bench_multiply::<DOK>(t1(), b);
     }
+
+    #[bench]
+    fn bench_dense_t2(b: &mut test::Bencher) {
+        bench_multiply::<Dense>(t2(), b);
+    }
+
+    #[bench]
+    fn bench_csr_t2(b: &mut test::Bencher) {
+        bench_multiply::<CSR>(t2(), b);
+    }
+
+    #[bench]
+    fn bench_coo_t2(b: &mut test::Bencher) {
+        bench_multiply::<COO>(t2(), b);
+    }
+
+    #[bench]
+    fn bench_lil_t2(b: &mut test::Bencher) {
+        bench_multiply::<LIL>(t2(), b);
+    }
+
+    #[bench]
+    fn bench_dok_t2(b: &mut test::Bencher) {
+        bench_multiply::<DOK>(t2(), b);
+    }
+
+    #[test]
+    fn dense_t1() { test_multiply::<Dense>(t1()); }
+
+    #[test]
+    fn csr_t1() { test_multiply::<CSR>(t1()); }
+
+    #[test]
+    fn coo_t1() { test_multiply::<COO>(t1()); }
+
+    #[test]
+    fn dok_t1() { test_multiply::<DOK>(t1()); }
+
+    #[test]
+    fn lil_t1() { test_multiply::<LIL>(t1()); }
 
     fn t1() -> TestCase {
         TestCase {
@@ -271,18 +297,32 @@ mod tests {
         }
     }
 
-    #[test]
-    fn dense() { test_multiply::<Dense>(t1()); }
+    fn t2() -> TestCase {
+        let mut x = Vec::new();
+        let mut m = Vec::new();
 
-    #[test]
-    fn csr() { test_multiply::<CSR>(t1()); }
+        let num_rows = 200;
+        let num_cols = 2000;
 
-    #[test]
-    fn coo() { test_multiply::<COO>(t1()); }
+        for row in 0..num_rows {
+            for col in 0..num_cols {
+                x.push(((row + col) % 15) as f64);
+                let v  = if row % 10 == 0 && col % 10 == 0 {
+                    (2 * row + col) % 7
+                } else {
+                    0
+                };
+                m.push(v as f64);
+            }
+        }
 
-    #[test]
-    fn dok() { test_multiply::<DOK>(t1()); }
+        TestCase {
+            x,
+            m,
+            r: num_rows,
+            c: num_cols,
+            y: Vec::new() // TODO
+        }
+    }
 
-    #[test]
-    fn lil() { test_multiply::<LIL>(t1()); }
 }
