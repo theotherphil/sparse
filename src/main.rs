@@ -194,6 +194,7 @@ impl Matrix for CSR {
         (0..self.row_offsets.len() - 1)
             .into_par_iter()
             .zip(y.par_iter_mut())
+            .with_min_len(200)
             .for_each(|(r, e)| {
                 // I've not checked the generated assembly, but using unchecked
                 // accesses here didn't improve run time. Neither did using
