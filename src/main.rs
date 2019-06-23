@@ -1,6 +1,11 @@
+//! A collection of implementations of sparse matrix-vector
+//! algorithms. Each storage type is annotated by its storage
+//! requirements for a matrix with `r` rows, `c` cols and `nnz`
+//! non-zero entries.
 #![feature(test)]
 
 extern crate test;
+use rayon::prelude::*;
 
 use std::collections::HashMap;
 
@@ -20,9 +25,11 @@ trait Matrix {
         y
     }
     fn multiply_into(&self, x: &[f64], y: &mut [f64]);
+    fn par_multiply_into(&self, x: &[f64], y: &mut [f64]);
 }
 
 /// Dictionary of keys
+/// Storage: 3 * `nnz` (? not sure of overhead of HashMap implementation)
 #[derive(Debug, Clone)]
 struct DOK {
     entries: HashMap<(usize, usize), f64>
@@ -51,9 +58,14 @@ impl Matrix for DOK {
             y[*row] += *value * x[*col];
         }
     }
+
+    fn par_multiply_into(&self, x: &[f64], y: &mut [f64]) {
+        self.multiply_into(x, y);
+    }
 }
 
 /// List of lists
+/// Storage: 3 * `r` + 2 * `nnz`
 #[derive(Debug, Clone)]
 struct LIL {
     rows: Vec<Vec<(usize, f64)>>
@@ -86,9 +98,14 @@ impl Matrix for LIL {
             }
         }
     }
+
+    fn par_multiply_into(&self, x: &[f64], y: &mut [f64]) {
+        self.multiply_into(x, y);
+    }
 }
 
 /// Coordinate list
+/// Storage: 3 * `nnz`
 #[derive(Debug, Clone)]
 struct COO {
     /// (row, col, value)
@@ -118,13 +135,18 @@ impl Matrix for COO {
             y[*row] += *value * x[*col];
         }
     }
+
+    fn par_multiply_into(&self, x: &[f64], y: &mut [f64]) {
+        self.multiply_into(x, y);
+    }
 }
 
 /// Compressed sparse row
+/// Storage: 2 * `nnz` + `r`
 #[derive(Debug, Clone)]
 struct CSR {
-    // All entries in this matrix
-    entries: Vec<f64>,
+    // All values in this matrix
+    values: Vec<f64>,
     // row_offsets[i] is the starting index for the ith
     // row. Includes a final entry with value entries.len().
     row_offsets: Vec<usize>,
@@ -136,23 +158,23 @@ impl Matrix for CSR {
     fn from_dense_array(data: Vec<f64>, rows: usize, cols: usize) -> Self {
         assert!(rows > 0 && cols > 0, "empty matrices are not supported");
 
-        let mut entries = Vec::new();
+        let mut values = Vec::new();
         let mut row_offsets = Vec::new();
         let mut col_indices = Vec::new();
 
         for row in 0..rows {
-            row_offsets.push(entries.len());
+            row_offsets.push(values.len());
             for col in 0..cols {
                 let v = data[row * cols + col];
                 if v != 0.0 {
-                    entries.push(v);
+                    values.push(v);
                     col_indices.push(col);
                 }
             }
         }
-        row_offsets.push(entries.len());
+        row_offsets.push(values.len());
 
-        CSR { entries, row_offsets, col_indices }
+        CSR { values, row_offsets, col_indices }
     }
 
     #[inline(never)]
@@ -160,13 +182,18 @@ impl Matrix for CSR {
         // Outer loop can be parallelised
         for i in 0..self.row_offsets.len() - 1 {
             for j in self.row_offsets[i]..self.row_offsets[i + 1] {
-                y[i] += self.entries[j] * x[self.col_indices[j]];
+                y[i] += self.values[j] * x[self.col_indices[j]];
             }
         }
+    }
+
+    fn par_multiply_into(&self, x: &[f64], y: &mut [f64]) {
+        self.multiply_into(x, y);
     }
 }
 
 // Row-major dense matrix
+// Storage: `r` * `c`
 struct Dense {
     data: Vec<f64>,
     rows: usize,
@@ -185,16 +212,31 @@ impl Matrix for Dense {
             }
         }
     }
+
+    fn par_multiply_into(&self, x: &[f64], y: &mut [f64]) {
+        self.multiply_into(x, y);
+    }
+}
+
+// And this one
+// https://people.eecs.berkeley.edu/~aydin/csb2009.pdf
+// https://people.eecs.berkeley.edu/~aydin/csb/html/index.html
+struct CSB {
+    // TODO!
 }
 
 // Also do this one (block based 2005)
 // http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.70.7389&rep=rep1&type=pdf
+// https://e-reports-ext.llnl.gov/pdf/322078.pdf
 
 // And this one (CSR5 2015)
 // https://arxiv.org/pdf/1503.05032.pdf
 
 // And this one (SPARSITY 2003)
 // https://pdfs.semanticscholar.org/66ba/6dd1b746aa0e10c3a4f62a5c4dd6b955b503.pdf
+
+// And this one (OKSI, 2005)
+// https://pdfs.semanticscholar.org/5672/ce28f2927b81b01303e4926643c55a4c8133.pdf
 
 #[cfg(test)]
 mod tests {
@@ -241,6 +283,25 @@ mod tests {
         }
     }
 
+    macro_rules! bench_par_multiply {
+        ($($name:ident, $matrix_type:ty, $test_case:expr),*) => {
+            $(
+                #[bench]
+                fn $name(b: &mut test::Bencher) {
+                    let t = $test_case;
+                    let x = t.x;
+                    let d = test::black_box(
+                        <$matrix_type>::from_dense_array(t.m, t.r, t.c)
+                    );
+                    let mut y = test::black_box(vec![0.0; x.len()]);
+                    b.iter(|| {
+                        d.par_multiply_into(test::black_box(&x), &mut y);
+                    });
+                }
+            )*
+        }
+    }
+
     test_multiply!(
         test_dense_t1, Dense, t1(),
         test_lil_t1, LIL, t1(),
@@ -260,6 +321,19 @@ mod tests {
         bench_dok_t2, DOK, t2(),
         bench_csr_t1, CSR, t1(),
         bench_csr_t2, CSR, t2()
+    );
+
+    bench_par_multiply!(
+        bench_dense_par_t1, Dense, t1(),
+        bench_dense_par_t2, Dense, t2(),
+        bench_lil_par_t1, LIL, t1(),
+        bench_lil_par_t2, LIL, t2(),
+        bench_coo_par_t1, COO, t1(),
+        bench_coo_par_t2, COO, t2(),
+        bench_dok_par_t1, DOK, t1(),
+        bench_dok_par_t2, DOK, t2(),
+        bench_csr_par_t1, CSR, t1(),
+        bench_csr_par_t2, CSR, t2()
     );
 
     fn t1() -> TestCase {
@@ -303,5 +377,4 @@ mod tests {
             y: Vec::new() // TODO
         }
     }
-
 }
