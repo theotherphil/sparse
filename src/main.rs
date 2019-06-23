@@ -182,7 +182,6 @@ impl Matrix for CSR {
 
     #[inline(never)]
     fn multiply_into(&self, x: &[f64], y: &mut [f64]) {
-        // Outer loop can be parallelised
         for i in 0..self.row_offsets.len() - 1 {
             for j in self.row_offsets[i]..self.row_offsets[i + 1] {
                 y[i] += self.values[j] * x[self.col_indices[j]];
@@ -190,11 +189,15 @@ impl Matrix for CSR {
         }
     }
 
+    #[inline(never)]
     fn par_multiply_into(&self, x: &[f64], y: &mut [f64]) {
         (0..self.row_offsets.len() - 1)
             .into_par_iter()
             .zip(y.par_iter_mut())
             .for_each(|(r, e)| {
+                // I've not checked the generated assembly, but using unchecked
+                // accesses here didn't improve run time. Neither did using
+                // pointer offets into y rather than zipping parallel iterators.
                 for j in self.row_offsets[r]..self.row_offsets[r + 1] {
                     *e += self.values[j] * x[self.col_indices[j]];
                 }
