@@ -1,7 +1,10 @@
 //! A collection of implementations of sparse matrix-vector
-//! algorithms. Each storage type is annotated by its storage
-//! requirements for a matrix with `r` rows, `c` cols and `nnz`
-//! non-zero entries.
+//! algorithms.
+//!
+//! Each matrix type is annotated by its storage, work (operations
+//! required on a single processor) and span (longest chain of sequential
+//! operations when running with infinitely many processors) for a matrix
+//! with `r` rows, `c` cols and `nnz` non-zero entries.
 #![feature(test)]
 
 extern crate test;
@@ -188,7 +191,14 @@ impl Matrix for CSR {
     }
 
     fn par_multiply_into(&self, x: &[f64], y: &mut [f64]) {
-        self.multiply_into(x, y);
+        (0..self.row_offsets.len() - 1)
+            .into_par_iter()
+            .zip(y.par_iter_mut())
+            .for_each(|(r, e)| {
+                for j in self.row_offsets[r]..self.row_offsets[r + 1] {
+                    *e += self.values[j] * x[self.col_indices[j]];
+                }
+            });
     }
 }
 
@@ -264,6 +274,21 @@ mod tests {
         }
     }
 
+    macro_rules! test_par_multiply {
+        ($($name:ident, $matrix_type:ty, $test_case:expr),*) => {
+            $(
+                #[test]
+                fn $name() {
+                    let t = $test_case;
+                    let d = <$matrix_type>::from_dense_array(t.m, t.r, t.c);
+                    let mut y = test::black_box(vec![0.0; t.x.len()]);
+                    d.par_multiply_into(&t.x, &mut y);
+                    assert_eq!(y, t.y);
+                }
+            )*
+        }
+    }
+
     macro_rules! bench_multiply {
         ($($name:ident, $matrix_type:ty, $test_case:expr),*) => {
             $(
@@ -308,6 +333,14 @@ mod tests {
         test_coo_t1, COO, t1(),
         test_dok_t1, DOK, t1(),
         test_csr_t1, CSR, t1()
+    );
+
+    test_par_multiply!(
+        test_dense_par_t1, Dense, t1(),
+        test_lil_par_t1, LIL, t1(),
+        test_coo_par_t1, COO, t1(),
+        test_dok_par_t1, DOK, t1(),
+        test_csr_par_t1, CSR, t1()
     );
 
     bench_multiply!(
